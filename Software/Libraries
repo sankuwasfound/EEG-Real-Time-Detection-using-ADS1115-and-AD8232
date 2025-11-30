@@ -1,1 +1,14 @@
+PYTHON - 
+
+Flask==3.1.2
+Flask-SocketIO==5.5.1
+python-socketio==5.15.0
+pyserial==3.5
+Flask-Cors==6.0.1
+
+ESP32 - 
+#include <Wire.h>
+#include <Adafruit_ADS1X15.h>
+#include <ArduinoJson.h>
+#include "arduinoFFT.h"
 
