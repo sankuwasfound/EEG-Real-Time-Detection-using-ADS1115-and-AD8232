@@ -1,1 +1,21 @@
+Electrodes (TRS Jack)
+---------------------
+Yellow → AD8232 LA (IN+)
+Green  → AD8232 RA (IN-)
+Red    → AD8232 RL (RLD)
+
+AD8232 → ESP32
+---------------------
+AD8232 3.3V → ESP32 3.3V
+AD8232 GND  → ESP32 GND
+AD8232 OUTPUT → ADS1115 A0
+
+ADS1115 → ESP32 (I2C)
+---------------------
+ADS1115 VCC → 3.3V
+ADS1115 GND → GND
+ADS1115 SDA → GPIO 21
+ADS1115 SCL → GPIO 22
+ADS1115 ADDR → GND
+ADS1115 A0 → AD8232 OUTPUT
 
