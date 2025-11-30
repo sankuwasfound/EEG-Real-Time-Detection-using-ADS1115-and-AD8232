@@ -1,1 +1,14 @@
+| Component                                         | Quantity | Purpose                                             |
+| ------------------------------------------------- | -------- | --------------------------------------------------- |
+| **ESP32 Development Board (ESP32-WROOM / DOIT)**  | 1        | Microcontroller for data acquisition & streaming    |
+| **ADS1115 16-bit ADC Module**                     | 1        | High-resolution analog-to-digital conversion        |
+| **AD8232 Biopotential Sensor Module**             | 1        | EEG signal amplification & filtering                |
+| **EEG Electrodes (3-wire TRS cable)**             | 1        | Captures brainwave signals (Yellow/Green/Red leads) |
+| **3.5mm TRS Electrode Lead Wire**                 | 1        | Connects electrodes to AD8232                       |
+| **Jumper Wires (Male-to-Male)**                   | ~10      | Module-to-module wiring                             |
+| **Breadboard / PCB**                              | 1        | Hardware layout & wiring support                    |
+| **USB Cable (Micro USB / Type-C)**                | 1        | Power + serial communication for ESP32              |
+| **Laptop / PC**                                   | 1        | Runs Python server & dashboard                      |
+| **Gel Electrodes / Conductive Paste** (optional)  | –        | Improves contact quality                            |
+| **Power Bank / Battery** (recommended for safety) | 1        | Safe, isolated power supply for EEG experiments     |
 
