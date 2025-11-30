@@ -1,1 +1,202 @@
+#include <Wire.h>
+#include <Adafruit_ADS1X15.h>
+#include <ArduinoJson.h>
+#include "arduinoFFT.h"
 
+Adafruit_ADS1115 ads;
+
+// FFT Configuration
+#define SAMPLES 256
+#define SAMPLING_FREQUENCY 200
+
+// FFT arrays - must be defined before FFT object
+static double vReal[SAMPLES];
+static double vImag[SAMPLES];
+
+// Create FFT object (new syntax for arduinoFFT v2.x)
+ArduinoFFT<double> FFT = ArduinoFFT<double>(vReal, vImag, SAMPLES, SAMPLING_FREQUENCY);
+
+unsigned int samplingIndex = 0;
+
+// Global variables
+int16_t currentADC = 0;
+unsigned long lastUpdate = 0;
+unsigned long lastJSONSend = 0;
+
+// Brain wave values
+float alphaWave = 0;
+float betaWave = 0;
+float thetaWave = 0;
+float deltaWave = 0;
+
+// Smoothing
+#define SMOOTHING_FACTOR 0.3
+float smoothedAlpha = 0;
+float smoothedBeta = 0;
+float smoothedTheta = 0;
+float smoothedDelta = 0;
+
+// Calibration
+int16_t baselineADC = 0;
+bool isCalibrated = false;
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Wait for serial connection
+  delay(2000);
+  
+  Serial.println("{\"status\":\"Starting Brain Wave Monitor\"}");
+  
+  // Initialize ADS1115
+  if (!ads.begin()) {
+    Serial.println("{\"error\":\"Failed to initialize ADS1115\"}");
+    while (1) delay(1000);
+  }
+  
+  ads.setGain(GAIN_TWO);
+  Serial.println("{\"status\":\"ADS1115 initialized\"}");
+  
+  // Initialize FFT arrays
+  for (int i = 0; i < SAMPLES; i++) {
+    vReal[i] = 0;
+    vImag[i] = 0;
+  }
+  
+  // Calibration
+  Serial.println("{\"status\":\"Calibrating...\"}");
+  performCalibration();
+  
+  Serial.println("{\"status\":\"Ready\"}");
+}
+
+void loop() {
+  // Sample at 200 Hz (every 5ms)
+  if (millis() - lastUpdate >= 5) {
+    currentADC = ads.readADC_SingleEnded(0);
+    
+    // Apply baseline correction
+    int16_t correctedADC = currentADC - baselineADC;
+    
+    // Store for FFT
+    vReal[samplingIndex] = correctedADC;
+    vImag[samplingIndex] = 0;
+    samplingIndex++;
+    
+    // Send raw data as JSON every 50ms (20 Hz)
+    if (millis() - lastJSONSend >= 50) {
+      sendRawDataJSON();
+      lastJSONSend = millis();
+    }
+    
+    // Perform FFT when buffer is full
+    if (samplingIndex >= SAMPLES) {
+      samplingIndex = 0;
+      performFFTAnalysis();
+      sendBrainWaveJSON();
+    }
+    
+    lastUpdate = millis();
+  }
+}
+
+void performCalibration() {
+  long sum = 0;
+  int samples = 500;
+  
+  for (int i = 0; i < samples; i++) {
+    sum += ads.readADC_SingleEnded(0);
+    delay(10);
+  }
+  
+  baselineADC = sum / samples;
+  isCalibrated = true;
+  
+  // Send calibration result
+  StaticJsonDocument<128> doc;
+  doc["status"] = "calibrated";
+  doc["baseline"] = baselineADC;
+  serializeJson(doc, Serial);
+  Serial.println();
+}
+
+void performFFTAnalysis() {
+  // Windowing (new syntax - no need to pass arrays)
+  FFT.windowing(FFTWindow::Hamming, FFTDirection::Forward);
+  
+  // Compute FFT
+  FFT.compute(FFTDirection::Forward);
+  
+  // Compute magnitudes
+  FFT.complexToMagnitude();
+  
+  // Frequency resolution
+  double freqResolution = (double)SAMPLING_FREQUENCY / SAMPLES;
+  
+  // Band powers
+  double deltaPower = 0, thetaPower = 0, alphaPower = 0, betaPower = 0;
+  int deltaCount = 0, thetaCount = 0, alphaCount = 0, betaCount = 0;
+  
+  for (int i = 1; i < (SAMPLES / 2); i++) {
+    double frequency = i * freqResolution;
+    double magnitude = vReal[i];
+    
+    if (frequency >= 0.5 && frequency < 4) {
+      deltaPower += magnitude;
+      deltaCount++;
+    } else if (frequency >= 4 && frequency < 8) {
+      thetaPower += magnitude;
+      thetaCount++;
+    } else if (frequency >= 8 && frequency < 13) {
+      alphaPower += magnitude;
+      alphaCount++;
+    } else if (frequency >= 13 && frequency < 30) {
+      betaPower += magnitude;
+      betaCount++;
+    }
+  }
+  
+  // Average
+  if (deltaCount > 0) deltaPower /= deltaCount;
+  if (thetaCount > 0) thetaPower /= thetaCount;
+  if (alphaCount > 0) alphaPower /= alphaCount;
+  if (betaCount > 0) betaPower /= betaCount;
+  
+  // Calculate percentages
+  double totalPower = deltaPower + thetaPower + alphaPower + betaPower;
+  
+  if (totalPower > 0) {
+    deltaWave = (deltaPower / totalPower) * 100;
+    thetaWave = (thetaPower / totalPower) * 100;
+    alphaWave = (alphaPower / totalPower) * 100;
+    betaWave = (betaPower / totalPower) * 100;
+  }
+  
+  // Smoothing
+  smoothedDelta = (SMOOTHING_FACTOR * deltaWave) + ((1 - SMOOTHING_FACTOR) * smoothedDelta);
+  smoothedTheta = (SMOOTHING_FACTOR * thetaWave) + ((1 - SMOOTHING_FACTOR) * smoothedTheta);
+  smoothedAlpha = (SMOOTHING_FACTOR * alphaWave) + ((1 - SMOOTHING_FACTOR) * smoothedAlpha);
+  smoothedBeta = (SMOOTHING_FACTOR * betaWave) + ((1 - SMOOTHING_FACTOR) * smoothedBeta);
+}
+
+void sendRawDataJSON() {
+  StaticJsonDocument<128> doc;
+  doc["raw"] = currentADC;
+  doc["corrected"] = currentADC - baselineADC;
+  doc["timestamp"] = millis();
+  
+  serializeJson(doc, Serial);
+  Serial.println();
+}
+
+void sendBrainWaveJSON() {
+  StaticJsonDocument<256> doc;
+  doc["delta"] = (int)smoothedDelta;
+  doc["theta"] = (int)smoothedTheta;
+  doc["alpha"] = (int)smoothedAlpha;
+  doc["beta"] = (int)smoothedBeta;
+  doc["timestamp"] = millis();
+  
+  serializeJson(doc, Serial);
+  Serial.println();
+}
