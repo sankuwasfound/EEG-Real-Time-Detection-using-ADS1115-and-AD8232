@@ -1,1 +1,296 @@
+"""
+Brain Wave Monitor - Python Server
+Reads serial data from ESP32 and provides web interface with live plotting
+"""
 
+from flask import Flask, render_template, jsonify, request
+from flask_cors import CORS
+from flask_socketio import SocketIO, emit
+import serial
+import serial.tools.list_ports
+import json
+import time
+import threading
+from collections import deque
+from datetime import datetime
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'brainwave_secret_2024'
+CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+
+# Configuration
+SERIAL_PORT = 'COM9'  # Change to your port (COM3, /dev/ttyUSB0, etc.)
+BAUD_RATE = 115200
+MAX_DATA_POINTS = 500
+
+# Global data storage
+serial_connection = None
+is_running = False
+data_buffer = {
+    'raw': deque(maxlen=MAX_DATA_POINTS),
+    'timestamps': deque(maxlen=MAX_DATA_POINTS),
+    'brainwaves': {
+        'delta': deque(maxlen=100),
+        'theta': deque(maxlen=100),
+        'alpha': deque(maxlen=100),
+        'beta': deque(maxlen=100),
+    }
+}
+
+# Quiz data
+questions = [
+    {"question": "What is the capital of France?", "answer": "paris", "category": "Geography"},
+    {"question": "What is 15 x 12?", "answer": "180", "category": "Math"},
+    {"question": "What is the chemical symbol for gold?", "answer": "au", "category": "Science"},
+    {"question": "Who painted the Mona Lisa?", "answer": "leonardo da vinci", "category": "Art"},
+    {"question": "What is the square root of 144?", "answer": "12", "category": "Math"},
+]
+
+current_question_index = 0
+quiz_stats = {'correct': 0, 'total': 0}
+
+def find_serial_port():
+    """Auto-detect Arduino/ESP32 port"""
+    ports = serial.tools.list_ports.comports()
+    for port in ports:
+        if 'USB' in port.description or 'ACM' in port.device or 'COM' in port.device:
+            print(f"Found device: {port.device} - {port.description}")
+            return port.device
+    return None
+
+def connect_serial():
+    """Connect to serial port"""
+    global serial_connection, is_running
+    
+    try:
+        port = SERIAL_PORT if SERIAL_PORT else find_serial_port()
+        if not port:
+            print("ERROR: No serial port found!")
+            return False
+        
+        print(f"Connecting to {port} at {BAUD_RATE} baud...")
+        serial_connection = serial.Serial(port, BAUD_RATE, timeout=1)
+        time.sleep(2)  # Wait for connection to establish
+        is_running = True
+        print("✓ Serial connection established!")
+        return True
+    except Exception as e:
+        print(f"✗ Serial connection failed: {e}")
+        return False
+
+def read_serial_data():
+    """Read data from serial port in background thread"""
+    global is_running
+    
+    print("Starting serial reader thread...")
+    
+    while is_running:
+        try:
+            if serial_connection and serial_connection.in_waiting > 0:
+                line = serial_connection.readline().decode('utf-8', errors='ignore').strip()
+                
+                # Try to parse as JSON
+                try:
+                    data = json.loads(line)
+                    process_json_data(data)
+                except json.JSONDecodeError:
+                    # Not JSON, check if it's brain wave data
+                    if "Brain Waves" in line or "Delta:" in line:
+                        parse_debug_output(line)
+                    # Otherwise just log it
+                    elif line:
+                        print(f"Serial: {line}")
+                        
+        except Exception as e:
+            print(f"Read error: {e}")
+            time.sleep(0.1)
+
+def process_json_data(data):
+    """Process JSON data from serial"""
+    timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+    
+    # Store raw ADC data
+    if 'raw' in data:
+        data_buffer['raw'].append(data['raw'])
+        data_buffer['timestamps'].append(timestamp)
+    
+    # Store brain wave data
+    if 'delta' in data:
+        data_buffer['brainwaves']['delta'].append(data['delta'])
+    if 'theta' in data:
+        data_buffer['brainwaves']['theta'].append(data['theta'])
+    if 'alpha' in data:
+        data_buffer['brainwaves']['alpha'].append(data['alpha'])
+    if 'beta' in data:
+        data_buffer['brainwaves']['beta'].append(data['beta'])
+    
+    # Emit to all connected clients
+    socketio.emit('serial_data', data, namespace='/live')
+
+def parse_debug_output(line):
+    """Parse debug output from serial (Brain Waves - Delta: X%, etc.)"""
+    try:
+        if "Delta:" in line:
+            parts = line.split('|')[0].strip()
+            # Extract percentages
+            import re
+            matches = re.findall(r'(\w+):\s*([\d.]+)%', parts)
+            data = {}
+            for name, value in matches:
+                name_lower = name.lower()
+                data[name_lower] = float(value)
+            
+            # Store in buffer
+            for key in ['delta', 'theta', 'alpha', 'beta']:
+                if key in data:
+                    data_buffer['brainwaves'][key].append(data[key])
+            
+            # Emit to clients
+            socketio.emit('brainwave_update', data, namespace='/live')
+    except Exception as e:
+        pass
+
+@app.route('/')
+def index():
+    """Serve main HTML page"""
+    return render_template('index.html')
+
+@app.route('/api/status')
+def status():
+    """Get connection status"""
+    return jsonify({
+        'connected': is_running and serial_connection is not None,
+        'port': SERIAL_PORT,
+        'data_points': len(data_buffer['raw'])
+    })
+
+@app.route('/api/data')
+def get_data():
+    """Get current buffered data"""
+    return jsonify({
+        'raw': list(data_buffer['raw'])[-100:],  # Last 100 points
+        'timestamps': list(data_buffer['timestamps'])[-100:],
+        'brainwaves': {
+            'delta': list(data_buffer['brainwaves']['delta'])[-50:],
+            'theta': list(data_buffer['brainwaves']['theta'])[-50:],
+            'alpha': list(data_buffer['brainwaves']['alpha'])[-50:],
+            'beta': list(data_buffer['brainwaves']['beta'])[-50:],
+        }
+    })
+
+@app.route('/api/brainwaves')
+def get_brainwaves():
+    """Get latest brain wave values"""
+    return jsonify({
+        'delta': list(data_buffer['brainwaves']['delta'])[-1] if data_buffer['brainwaves']['delta'] else 0,
+        'theta': list(data_buffer['brainwaves']['theta'])[-1] if data_buffer['brainwaves']['theta'] else 0,
+        'alpha': list(data_buffer['brainwaves']['alpha'])[-1] if data_buffer['brainwaves']['alpha'] else 0,
+        'beta': list(data_buffer['brainwaves']['beta'])[-1] if data_buffer['brainwaves']['beta'] else 0,
+    })
+
+@app.route('/api/question')
+def get_question():
+    """Get current quiz question"""
+    global current_question_index
+    q = questions[current_question_index]
+    return jsonify({
+        'question': q['question'],
+        'category': q['category'],
+        'index': current_question_index,
+        'total': len(questions)
+    })
+
+@app.route('/api/answer', methods=['POST'])
+def check_answer():
+    """Check quiz answer"""
+    global current_question_index, quiz_stats
+    
+    data = request.get_json()
+    user_answer = data.get('answer', '').strip().lower()
+    
+    correct_answer = questions[current_question_index]['answer']
+    is_correct = user_answer == correct_answer
+    
+    if is_correct:
+        quiz_stats['correct'] += 1
+    quiz_stats['total'] += 1
+    
+    # Move to next question
+    current_question_index = (current_question_index + 1) % len(questions)
+    
+    return jsonify({
+        'correct': is_correct,
+        'message': 'Correct!' if is_correct else f'The correct answer is: {questions[current_question_index - 1]["answer"]}',
+        'stats': quiz_stats
+    })
+
+@app.route('/api/stats')
+def get_stats():
+    """Get quiz statistics"""
+    accuracy = (quiz_stats['correct'] * 100 // quiz_stats['total']) if quiz_stats['total'] > 0 else 0
+    return jsonify({
+        'correct': quiz_stats['correct'],
+        'total': quiz_stats['total'],
+        'accuracy': accuracy
+    })
+
+@socketio.on('connect', namespace='/live')
+def handle_connect():
+    """Handle WebSocket connection"""
+    print('Client connected to WebSocket')
+    emit('status', {'connected': is_running})
+
+@socketio.on('disconnect', namespace='/live')
+def handle_disconnect():
+    """Handle WebSocket disconnection"""
+    print('Client disconnected from WebSocket')
+
+@socketio.on('request_data', namespace='/live')
+def handle_data_request():
+    """Send current data to client"""
+    emit('data_update', {
+        'raw': list(data_buffer['raw'])[-50:],
+        'brainwaves': {
+            'delta': list(data_buffer['brainwaves']['delta'])[-1] if data_buffer['brainwaves']['delta'] else 0,
+            'theta': list(data_buffer['brainwaves']['theta'])[-1] if data_buffer['brainwaves']['theta'] else 0,
+            'alpha': list(data_buffer['brainwaves']['alpha'])[-1] if data_buffer['brainwaves']['alpha'] else 0,
+            'beta': list(data_buffer['brainwaves']['beta'])[-1] if data_buffer['brainwaves']['beta'] else 0,
+        }
+    })
+
+def main():
+    """Main function"""
+    print("=" * 50)
+    print("Brain Wave Monitor - Python Server")
+    print("=" * 50)
+    
+    # Connect to serial
+    if not connect_serial():
+        print("\nFailed to connect to serial port.")
+        print("Please check:")
+        print("1. ESP32 is connected via USB")
+        print("2. Correct port is set in SERIAL_PORT variable")
+        print("3. No other program is using the serial port")
+        return
+    
+    # Start serial reader thread
+    reader_thread = threading.Thread(target=read_serial_data, daemon=True)
+    reader_thread.start()
+    
+    # Start web server
+    print(f"\n✓ Server starting on http://localhost:5000")
+    print("✓ Open your browser and navigate to http://localhost:5000")
+    print("\nPress Ctrl+C to stop\n")
+    
+    try:
+        socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
+    except KeyboardInterrupt:
+        print("\n\nShutting down...")
+        is_running = False
+        if serial_connection:
+            serial_connection.close()
+        print("✓ Shutdown complete")
+
+if __name__ == '__main__':
+    main()
