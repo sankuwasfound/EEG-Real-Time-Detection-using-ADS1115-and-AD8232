@@ -1,1 +1,563 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Brain Wave Monitor - Python Server</title>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 20px;
+      min-height: 100vh;
+    }
+    
+    .header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    
+    h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    }
+    
+    .status-bar {
+      display: flex;
+      justify-content: center;
+      gap: 15px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+    
+    .status-item {
+      background: rgba(255, 255, 255, 0.2);
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 14px;
+      backdrop-filter: blur(10px);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+    
+    .status-connected { background: #4CAF50; }
+    .status-disconnected { background: #f44336; }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    .container {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 15px;
+      padding: 20px;
+      margin-bottom: 20px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+    }
+    
+    .chart-container {
+      position: relative;
+      height: 300px;
+      background: white;
+      border-radius: 10px;
+      padding: 10px;
+    }
+    
+    .quiz-section {
+      background: rgba(255, 255, 255, 0.95);
+      color: #333;
+      padding: 25px;
+      border-radius: 15px;
+    }
+    
+    .stats {
+      display: flex;
+      justify-content: space-around;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    
+    .stat-box {
+      text-align: center;
+      padding: 15px;
+      background: rgba(102, 126, 234, 0.1);
+      border-radius: 10px;
+      min-width: 120px;
+      margin: 5px;
+    }
+    
+    .stat-value {
+      font-size: 28px;
+      font-weight: bold;
+      color: #667eea;
+    }
+    
+    .stat-label {
+      font-size: 12px;
+      color: #666;
+      margin-top: 5px;
+    }
+    
+    .brainwave-values {
+      display: flex;
+      justify-content: space-around;
+      margin-top: 15px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    
+    .wave-badge {
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-weight: bold;
+      min-width: 100px;
+      text-align: center;
+    }
+    
+    .wave-delta { background: #9C27B0; color: white; }
+    .wave-theta { background: #2196F3; color: white; }
+    .wave-alpha { background: #4CAF50; color: white; }
+    .wave-beta { background: #FF9800; color: white; }
+    
+    .question {
+      font-size: 20px;
+      font-weight: bold;
+      margin: 15px 0;
+      color: #667eea;
+    }
+    
+    input[type="text"] {
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      border: 2px solid #667eea;
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+    
+    button {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 12px 30px;
+      font-size: 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      margin: 5px;
+      transition: all 0.3s;
+    }
+    
+    button:hover {
+      background: #764ba2;
+      transform: translateY(-2px);
+    }
+    
+    .feedback {
+      margin-top: 15px;
+      padding: 15px;
+      border-radius: 8px;
+      font-weight: bold;
+      display: none;
+    }
+    
+    .correct {
+      background: #d4edda;
+      color: #155724;
+      display: block;
+    }
+    
+    .incorrect {
+      background: #f8d7da;
+      color: #721c24;
+      display: block;
+    }
+    
+    .category-badge {
+      display: inline-block;
+      background: #764ba2;
+      color: white;
+      padding: 5px 15px;
+      border-radius: 20px;
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+    
+    .data-rate {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.8);
+      margin-top: 10px;
+    }
+    
+    @media (max-width: 768px) {
+      h1 { font-size: 1.8em; }
+      .container { padding: 15px; }
+      .chart-container { height: 250px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1> Brain Wave Monitor</h1>
+    <div class="subtitle">Python Serial Server</div>
+  </div>
+  
+  <div class="status-bar">
+    <div class="status-item">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="connectionStatus">Connecting...</span>
+    </div>
+    <div class="status-item" id="dataRate">📊 Data Rate: 0 Hz</div>
+    <div class="status-item" id="dataPoints">📈 Points: 0</div>
+  </div>
+  
+  <div class="container">
+    <h2> Real-Time Signal (ADC Values)</h2>
+    <div class="chart-container">
+      <canvas id="signalChart"></canvas>
+    </div>
+    <div class="data-rate">Streaming live data from ESP32 via serial port</div>
+  </div>
+  
+  <div class="container">
+    <h2> Brain Wave Frequencies</h2>
+    <div class="chart-container">
+      <canvas id="brainwaveChart"></canvas>
+    </div>
+    <div class="brainwave-values">
+      <div class="wave-badge wave-delta">
+        <div>Delta</div>
+        <div id="deltaValue">0%</div>
+        <div style="font-size: 10px;">0.5-4 Hz</div>
+      </div>
+      <div class="wave-badge wave-theta">
+        <div>Theta</div>
+        <div id="thetaValue">0%</div>
+        <div style="font-size: 10px;">4-8 Hz</div>
+      </div>
+      <div class="wave-badge wave-alpha">
+        <div>Alpha</div>
+        <div id="alphaValue">0%</div>
+        <div style="font-size: 10px;">8-13 Hz</div>
+      </div>
+      <div class="wave-badge wave-beta">
+        <div>Beta</div>
+        <div id="betaValue">0%</div>
+        <div style="font-size: 10px;">13-30 Hz</div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="quiz-section">
+    <h2> Knowledge Challenge</h2>
+    <div class="stats">
+      <div class="stat-box">
+        <div class="stat-value" id="correctCount">0</div>
+        <div class="stat-label">Correct</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="totalCount">0</div>
+        <div class="stat-label">Total</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="accuracy">0%</div>
+        <div class="stat-label">Accuracy</div>
+      </div>
+    </div>
+    <div class="category-badge" id="category">Loading...</div>
+    <div class="question" id="question">Loading question...</div>
+    <input type="text" id="answer" placeholder="Type your answer here..." />
+    <div>
+      <button onclick="submitAnswer()">Submit Answer</button>
+      <button onclick="nextQuestion()">Next Question</button>
+    </div>
+    <div class="feedback" id="feedback"></div>
+  </div>
 
+  <script>
+    // WebSocket connection
+    const socket = io('/live');
+    
+    let isConnected = false;
+    let dataCount = 0;
+    let lastDataTime = Date.now();
+    let dataRateCounter = 0;
+    
+    // Chart.js setup for signal
+    const signalCtx = document.getElementById('signalChart').getContext('2d');
+    const signalChart = new Chart(signalCtx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'ADC Signal',
+          data: [],
+          borderColor: '#667eea',
+          backgroundColor: 'rgba(102, 126, 234, 0.1)',
+          borderWidth: 2,
+          tension: 0.4,
+          pointRadius: 0,
+          fill: true
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        scales: {
+          x: {
+            display: false
+          },
+          y: {
+            beginAtZero: false,
+            title: {
+              display: true,
+              text: 'ADC Value'
+            }
+          }
+        },
+        plugins: {
+          legend: {
+            display: false
+          }
+        }
+      }
+    });
+    
+    // Chart.js setup for brain waves
+    const brainwaveCtx = document.getElementById('brainwaveChart').getContext('2d');
+    const brainwaveChart = new Chart(brainwaveCtx, {
+      type: 'bar',
+      data: {
+        labels: ['Delta (0.5-4 Hz)', 'Theta (4-8 Hz)', 'Alpha (8-13 Hz)', 'Beta (13-30 Hz)'],
+        datasets: [{
+          label: 'Power %',
+          data: [0, 0, 0, 0],
+          backgroundColor: [
+            '#9C27B0',
+            '#2196F3',
+            '#4CAF50',
+            '#FF9800'
+          ],
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: {
+          duration: 300
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            max: 100,
+            title: {
+              display: true,
+              text: 'Power (%)'
+            }
+          }
+        },
+        plugins: {
+          legend: {
+            display: false
+          }
+        }
+      }
+    });
+    
+    // WebSocket event handlers
+    socket.on('connect', () => {
+      console.log('WebSocket connected');
+      isConnected = true;
+      updateConnectionStatus(true);
+    });
+    
+    socket.on('disconnect', () => {
+      console.log('WebSocket disconnected');
+      isConnected = false;
+      updateConnectionStatus(false);
+    });
+    
+    socket.on('serial_data', (data) => {
+      // Update signal chart with raw data
+      if (data.raw !== undefined) {
+        addSignalData(data.raw);
+        dataRateCounter++;
+      }
+    });
+    
+    socket.on('brainwave_update', (data) => {
+      // Update brain wave chart
+      updateBrainwaves(data);
+    });
+    
+    socket.on('data_update', (data) => {
+      // Bulk data update
+      if (data.raw && data.raw.length > 0) {
+        data.raw.forEach(value => addSignalData(value));
+      }
+      if (data.brainwaves) {
+        updateBrainwaves(data.brainwaves);
+      }
+    });
+    
+    function addSignalData(value) {
+      const maxPoints = 200;
+      
+      if (signalChart.data.labels.length >= maxPoints) {
+        signalChart.data.labels.shift();
+        signalChart.data.datasets[0].data.shift();
+      }
+      
+      signalChart.data.labels.push('');
+      signalChart.data.datasets[0].data.push(value);
+      signalChart.update('none'); // Update without animation for performance
+      
+      dataCount++;
+      document.getElementById('dataPoints').textContent = `📈 Points: ${dataCount}`;
+    }
+    
+    function updateBrainwaves(data) {
+      const delta = data.delta || 0;
+      const theta = data.theta || 0;
+      const alpha = data.alpha || 0;
+      const beta = data.beta || 0;
+      
+      brainwaveChart.data.datasets[0].data = [delta, theta, alpha, beta];
+      brainwaveChart.update('active');
+      
+      // Update badges
+      document.getElementById('deltaValue').textContent = Math.round(delta) + '%';
+      document.getElementById('thetaValue').textContent = Math.round(theta) + '%';
+      document.getElementById('alphaValue').textContent = Math.round(alpha) + '%';
+      document.getElementById('betaValue').textContent = Math.round(beta) + '%';
+    }
+    
+    function updateConnectionStatus(connected) {
+      const statusDot = document.getElementById('statusDot');
+      const statusText = document.getElementById('connectionStatus');
+      
+      if (connected) {
+        statusDot.className = 'status-dot status-connected';
+        statusText.textContent = '⚡ Connected';
+      } else {
+        statusDot.className = 'status-dot status-disconnected';
+        statusText.textContent = '⚠ Disconnected';
+      }
+    }
+    
+    // Calculate data rate
+    setInterval(() => {
+      const rate = dataRateCounter;
+      document.getElementById('dataRate').textContent = `📊 Data Rate: ${rate} Hz`;
+      dataRateCounter = 0;
+    }, 1000);
+    
+    // Quiz functions
+    async function fetchQuestion() {
+      try {
+        const response = await fetch('/api/question');
+        const data = await response.json();
+        document.getElementById('question').textContent = data.question;
+        document.getElementById('category').textContent = data.category;
+        document.getElementById('feedback').className = 'feedback';
+        document.getElementById('answer').value = '';
+        document.getElementById('answer').focus();
+      } catch (e) {
+        console.error('Failed to fetch question:', e);
+      }
+    }
+    
+    async function submitAnswer() {
+      const answer = document.getElementById('answer').value.trim();
+      if (!answer) return;
+      
+      try {
+        const response = await fetch('/api/answer', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({answer: answer})
+        });
+        const result = await response.json();
+        const feedback = document.getElementById('feedback');
+        
+        if (result.correct) {
+          feedback.textContent = '✓ ' + result.message;
+          feedback.className = 'feedback correct';
+        } else {
+          feedback.textContent = '✗ ' + result.message;
+          feedback.className = 'feedback incorrect';
+        }
+        
+        // Update stats
+        if (result.stats) {
+          document.getElementById('correctCount').textContent = result.stats.correct;
+          document.getElementById('totalCount').textContent = result.stats.total;
+          const accuracy = result.stats.total > 0 ? 
+            Math.round((result.stats.correct / result.stats.total) * 100) : 0;
+          document.getElementById('accuracy').textContent = accuracy + '%';
+        }
+        
+        // Auto-load next question after 2 seconds
+        setTimeout(() => fetchQuestion(), 2000);
+      } catch (e) {
+        console.error('Failed to submit answer:', e);
+      }
+    }
+    
+    function nextQuestion() {
+      fetchQuestion();
+    }
+    
+    // Enter key to submit
+    document.getElementById('answer').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') submitAnswer();
+    });
+    
+    // Request initial data
+    setTimeout(() => {
+      socket.emit('request_data');
+    }, 500);
+    
+    // Periodic data refresh
+    setInterval(() => {
+      fetch('/api/brainwaves')
+        .then(r => r.json())
+        .then(data => updateBrainwaves(data))
+        .catch(e => console.error('Fetch error:', e));
+    }, 2000);
+    
+    // Load first question
+    fetchQuestion();
+    
+    // Check connection status
+    fetch('/api/status')
+      .then(r => r.json())
+      .then(data => {
+        if (data.connected) {
+          updateConnectionStatus(true);
+        }
+      });
+  </script>
+</body>
+</html>
