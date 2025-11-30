@@ -1,4 +1,4 @@
-# Real-Time EEG System using AD8232 + ADS1115 + ESP32
+# Real-Time EEG System using AD8232 + ADS1115 + ESP32 and Python
 
 Team Electra — GSSS E-Minds Hackathon 2.0  
 A complete low-cost, real-time EEG acquisition and visualization system.
